@@ -6,69 +6,124 @@ import anthropic
 load_dotenv()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# INSTRUCTIONS: now asking for structured JSON
 instructions = (
     "You are a news agent. Find the 5 most important AI and AI security news "
-    "stories from the last 24 hours, using reputable sources. Summarize each "
-    "in your own words, 2 to 3 sentences, never copying text. "
+    "stories from the last 24 hours, using reputable sources. Order them from "
+    "most to least important; the first is the top story. Summarize each in "
+    "your own words, 2 to 3 sentences, never copying text. Add one sentence on "
+    "why it matters, especially for security or everyday users. "
     "Respond with ONLY a JSON array, no other text, like: "
-    '[{"title": "...", "summary": "...", "source": "...", '
+    '[{"title": "...", "summary": "...", "why": "...", "source": "...", '
     '"url": "https://...", "category": "AI" or "AI Security"}]'
 )
 
 response = client.messages.create(
     model="claude-sonnet-5-5",
-    max_tokens=3000,
+    max_tokens=3500,
     system=instructions,
     tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
     messages=[{"role": "user", "content": f"Today is {date.today()}. Get today's AI news."}],
 )
 
 raw = "".join(b.text for b in response.content if b.type == "text")
-
-# PARSE: pull out just the JSON part, in case Claude added extra words
 try:
     stories = json.loads(raw[raw.find("["): raw.rfind("]") + 1])
 except ValueError:
     stories = []
     print("Could not read the stories. Raw output was:\n", raw)
 
-# BUILD CARDS: escape every field, and only allow https links
-cards = ""
-for s in stories:
-    url = s.get("url", "")
-    link = f'<a href="{html.escape(url)}" target="_blank" rel="noopener">Read at {html.escape(s.get("source", "source"))}</a>' if url.startswith("https://") else ""
-    tag_class = "sec" if "Security" in s.get("category", "") else "ai"
-    cards += f"""
-    <article class="card">
-      <span class="tag {tag_class}">{html.escape(s.get("category", "AI"))}</span>
-      <h2>{html.escape(s.get("title", ""))}</h2>
-      <p>{html.escape(s.get("summary", ""))}</p>
-      {link}
-    </article>"""
+def e(value):
+    return html.escape(str(value or ""))
 
-page = f"""<!doctype html>
+def card(s, top=False):
+    url = s.get("url", "")
+    link = f'<a href="{e(url)}" target="_blank" rel="noopener">&gt; read at {e(s.get("source", "source"))}</a>' if url.startswith("https://") else ""
+    label = "TOP STORY" if top else e(s.get("category", "AI")).upper()
+    return f"""<article class="card{' top' if top else ''}">
+  <div class="label">{label}</div>
+  <h2>{e(s.get("title"))}</h2>
+  <p>{e(s.get("summary"))}</p>
+  <p class="why"><span>why it matters:</span> {e(s.get("why"))}</p>
+  {link}
+</article>"""
+
+top_html = card(stories[0], top=True) if stories else "<p>No stories today.</p>"
+rest_html = "".join(card(s) for s in stories[1:])
+
+template = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI News {date.today()}</title>
+<title>AI Briefing __DATE__</title>
 <style>
-  body {{ margin: 0; font-family: -apple-system, Segoe UI, sans-serif; background: #f2f4f7; color: #16202c; }}
-  header {{ background: #12263f; color: #fff; padding: 36px 24px; text-align: center; }}
-  header h1 {{ margin: 0; font-size: 2rem; }}
-  header p {{ margin: 8px 0 0; opacity: 0.8; }}
-  main {{ max-width: 1000px; margin: 28px auto; padding: 0 16px; display: grid;
-         grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 18px; }}
-  .card {{ background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
-  .card h2 {{ font-size: 1.1rem; margin: 10px 0; }}
-  .card p {{ line-height: 1.5; margin: 0 0 14px; }}
-  .card a {{ color: #1f5fbf; font-weight: 600; text-decoration: none; }}
-  .tag {{ font-size: 0.75rem; font-weight: 700; padding: 4px 10px; border-radius: 99px; }}
-  .ai {{ background: #e3edfb; color: #1f4e8c; }}
-  .sec {{ background: #fde8e1; color: #a63a14; }}
+  body { margin: 0; background: #07130f; color: #cdeee2; font-family: -apple-system, Segoe UI, sans-serif; }
+  .banner { position: relative; overflow: hidden; border-bottom: 1px solid #0F6E56; padding: 40px 28px;
+            background-image: linear-gradient(#0F6E5640 1px, transparent 1px), linear-gradient(90deg, #0F6E5640 1px, transparent 1px);
+            background-size: 40px 40px; }
+  .banner h1 { margin: 0; font-family: Menlo, Consolas, monospace; color: #5DCAA5; font-size: 2rem; }
+  .banner h1 .cursor { animation: blink 1s steps(1) infinite; }
+  .banner p { margin: 10px 0 0; font-family: Menlo, Consolas, monospace; color: #9FE1CB; font-size: 0.9rem; }
+  @keyframes blink { 50% { opacity: 0; } }
+  #music { position: absolute; top: 20px; right: 24px; background: transparent; color: #5DCAA5;
+           border: 1px solid #0F6E56; font-family: Menlo, Consolas, monospace; padding: 8px 12px; cursor: pointer; border-radius: 6px; }
+  #music:hover { background: #0d1f19; }
+  main { max-width: 1050px; margin: 28px auto; padding: 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 16px; }
+  .card { background: #0d1f19; border: 1px solid #0F6E56; border-radius: 10px; padding: 18px; }
+  .card.top { border: 2px solid #5DCAA5; padding: 26px; }
+  .card.top h2 { font-size: 1.6rem; }
+  .label { font-family: Menlo, Consolas, monospace; font-size: 0.75rem; color: #5DCAA5; letter-spacing: 0.08em; }
+  .card h2 { font-size: 1.1rem; color: #E1F5EE; margin: 8px 0; }
+  .card p { line-height: 1.55; margin: 0 0 12px; }
+  .why { color: #9FE1CB; font-size: 0.92rem; }
+  .why span { font-family: Menlo, Consolas, monospace; color: #5DCAA5; }
+  .card a { font-family: Menlo, Consolas, monospace; color: #5DCAA5; text-decoration: none; font-size: 0.9rem; }
+  .card a:hover { text-decoration: underline; }
+  footer { text-align: center; font-family: Menlo, Consolas, monospace; color: #0F6E56; font-size: 0.8rem; padding: 30px; }
 </style></head>
 <body>
-<header><h1>Daily AI Briefing</h1><p>{date.today():%A, %B %d, %Y} · Built by Alex Wray</p></header>
-<main>{cards}</main>
+<header class="banner">
+  <button id="music">[ play ambient ]</button>
+  <h1>&gt; daily_ai_briefing<span class="cursor">_</span></h1>
+  <p>status: online &middot; __COUNT__ stories &middot; __LONGDATE__ &middot; built by Alex Wray</p>
+</header>
+<main>
+  __TOP__
+  <div class="grid">__REST__</div>
+</main>
+<footer>// generated by an AI agent &middot; summaries in its own words &middot; verify before sharing</footer>
+<script>
+  let ctx = null, timer = null;
+  const btn = document.getElementById("music");
+  const notes = [220, 261.6, 293.7, 329.6, 392, 440];
+  function startMusic() {
+    ctx = new AudioContext();
+    const master = ctx.createGain(); master.gain.value = 0.06; master.connect(ctx.destination);
+    [110, 164.8].forEach(f => {
+      const o = ctx.createOscillator(); o.type = "sine"; o.frequency.value = f;
+      o.connect(master); o.start();
+    });
+    timer = setInterval(() => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "square"; o.frequency.value = notes[Math.floor(Math.random() * notes.length)];
+      g.gain.setValueAtTime(0.05, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      o.connect(g); g.connect(master); o.start(); o.stop(ctx.currentTime + 0.4);
+    }, 450);
+    btn.textContent = "[ stop ambient ]";
+  }
+  function stopMusic() {
+    clearInterval(timer); ctx.close(); ctx = null;
+    btn.textContent = "[ play ambient ]";
+  }
+  btn.addEventListener("click", () => ctx ? stopMusic() : startMusic());
+</script>
 </body></html>"""
+
+page = (template
+        .replace("__DATE__", str(date.today()))
+        .replace("__LONGDATE__", f"{date.today():%A, %B %d, %Y}")
+        .replace("__COUNT__", str(len(stories)))
+        .replace("__TOP__", top_html)
+        .replace("__REST__", rest_html))
 
 with open("news.html", "w") as f:
     f.write(page)
