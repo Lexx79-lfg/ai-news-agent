@@ -5,25 +5,38 @@ on:
     - cron: "0 13 * * *"
     - cron: "0 15 * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - news_agent.py
+      - .github/workflows/**
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+
   build-and-deploy:
+    needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
@@ -35,9 +48,26 @@ jobs:
         run: |
           mkdir site
           cp news.html site/index.html
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      - name: Check the live page
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          # Look for today's UTC date in the page title, which every build has (One Idea can be missing).
+          # GitHub Pages can take a few minutes to serve a new deploy, so retry for about 5 minutes.
+          expected="<title>AI Briefing $(date -u +%F)</title>"
+          for i in $(seq 1 20); do
+            if curl -fsSL --max-time 20 "${PAGE_URL}?check=${GITHUB_RUN_ID}-${i}" | grep -qF "$expected"; then
+              echo "The live page shows today's briefing: $expected"
+              exit 0
+            fi
+            echo "Not live yet (try ${i}/20). Waiting 15 seconds..."
+            sleep 15
+          done
+          echo "::error::The live page never showed '$expected' at ${PAGE_URL}"
+          exit 1
